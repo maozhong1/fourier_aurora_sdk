@@ -1,0 +1,4 @@
+<mujoco model="terrain">
+    <worldbody>
+    </worldbody>
+</mujoco>

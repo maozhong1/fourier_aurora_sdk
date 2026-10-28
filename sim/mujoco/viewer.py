@@ -174,7 +174,9 @@ def _file_loader(path: str, terrain_path: str) -> _LoaderWithPathType:
 
 def _reload(
     simulate: _Simulate, loader: _InternalLoaderType,
-    notify_loaded: Optional[Callable[[], None]] = None
+    notify_loaded: Optional[Callable[[], None]] = None,
+    cam: Optional[mujoco.MjvCamera] = None,
+    track_camera: bool = False,
 ) -> Optional[Tuple[mujoco.MjModel, mujoco.MjData]]:
   """Internal function for reloading a model in the viewer."""
   try:
@@ -193,13 +195,45 @@ def _reload(
     path = load_tuple[2] if len(load_tuple) == 3 else ''
     simulate.load(m, d, path)
 
+    if track_camera:
+      if cam is None:
+        raise ValueError('camera tracking requires a viewer camera')
+      body_id = _tracking_body_id(m)
+      with simulate.lock():
+        mujoco.mj_forward(m, d)
+        cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+        cam.trackbodyid = body_id
+        cam.lookat[:] = d.xpos[body_id]
+
     if notify_loaded:
       notify_loaded()
 
     return m, d
 
 
-def _physics_loop(simulate: _Simulate, loader: Optional[_InternalLoaderType]):
+def _tracking_body_id(model: mujoco.MjModel) -> int:
+  for name in ('base', 'pelvis', 'base_link', 'root'):
+    body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+    if body_id > 0:
+      return body_id
+
+  for body_id in range(1, model.nbody):
+    if model.body_parentid[body_id] == 0 and model.body_jntnum[body_id] > 0:
+      return body_id
+
+  for body_id in range(1, model.nbody):
+    if model.body_parentid[body_id] == 0:
+      return body_id
+
+  raise ValueError('MuJoCo model has no body to track')
+
+
+def _physics_loop(
+    simulate: _Simulate,
+    loader: Optional[_InternalLoaderType],
+    cam: mujoco.MjvCamera,
+    track_camera: bool,
+):
   """Physics loop for the GUI, to be run in a separate thread."""
   m: mujoco.MjModel = None
   d: mujoco.MjData = None
@@ -222,7 +256,7 @@ def _physics_loop(simulate: _Simulate, loader: Optional[_InternalLoaderType]):
       reload = True
 
     if reload and loader is not None:
-      result = _reload(simulate, loader)
+      result = _reload(simulate, loader, cam=cam, track_camera=track_camera)
       if result is not None:
         m, d = result
         ctrl_noise = np.zeros((m.nu,))
@@ -321,6 +355,7 @@ def _launch_internal(
     run_physics_thread: bool,
     loader: Optional[_InternalLoaderType] = None,
     handle_return: Optional['queue.Queue[Handle]'] = None,
+    track_camera: bool = False,
 ) -> None:
   """Internal API, so that the public API has more readable type annotations."""
   if model is None and data is not None:
@@ -365,10 +400,13 @@ def _launch_internal(
   side_thread = None
   if run_physics_thread:
     side_thread = threading.Thread(
-        target=_physics_loop, args=(simulate, loader))
+        target=_physics_loop, args=(simulate, loader, cam, track_camera))
   else:
     side_thread = threading.Thread(
-        target=_reload, args=(simulate, loader, notify_loaded))
+        target=_reload,
+        args=(simulate, loader, notify_loaded),
+        kwargs=dict(cam=cam, track_camera=track_camera),
+    )
 
   def make_exit_requester(simulate):
     def exit_requester():
@@ -393,9 +431,18 @@ def launch(model: Optional[mujoco.MjModel] = None,
       model, data, run_physics_thread=True, loader=loader)
 
 
-def launch_from_path(path: str, terrain_path: str) -> None:
+def launch_from_path(
+    path: str,
+    terrain_path: str,
+    *,
+    track_camera: bool = False,
+) -> None:
   """Launches the Simulate GUI from file path."""
-  _launch_internal(run_physics_thread=True, loader=_file_loader(path, terrain_path))
+  _launch_internal(
+      run_physics_thread=True,
+      loader=_file_loader(path, terrain_path),
+      track_camera=track_camera,
+  )
 
 
 def launch_passive(model: mujoco.MjModel, data: mujoco.MjData) -> Handle:
@@ -542,6 +589,9 @@ if __name__ == '__main__':
 
   _MJCF_PATH = flags.DEFINE_string('mjcf', None, 'Path to MJCF file.')
   _TERRAIN_PATH = flags.DEFINE_string('terrain', None, 'Path to TERRAIN file.')
+  _TRACK_CAMERA = flags.DEFINE_boolean(
+      'track_camera', False, 'Track the robot root body with the camera.'
+  )
   global lc
   global lcm_sub_msg_decoder, lcm_sub_msg
   global lcm_sub_thread
@@ -554,7 +604,11 @@ if __name__ == '__main__':
   def main(argv) -> None:
     del argv
     if _MJCF_PATH.value is not None and _TERRAIN_PATH.value is not None:
-      launch_from_path(os.path.expanduser(_MJCF_PATH.value), os.path.expanduser(_TERRAIN_PATH.value))
+      launch_from_path(
+          os.path.expanduser(_MJCF_PATH.value),
+          os.path.expanduser(_TERRAIN_PATH.value),
+          track_camera=_TRACK_CAMERA.value,
+      )
     else:
       launch()
 

@@ -99,7 +99,15 @@ def start_viewer():
         # 确保使用 Python 3 来运行 viewer.py
         python_executable = '/usr/bin/python3'  # 根据你的系统路径调整
         process = subprocess.Popen(
-            [python_executable, viewer_path, '--mjcf', xml_path, '--terrain', terrain_path],
+            [
+                python_executable,
+                viewer_path,
+                '--mjcf',
+                xml_path,
+                '--terrain',
+                terrain_path,
+                '--track_camera',
+            ],
             stdout=subprocess.PIPE,  # 重定向标准输出
             stderr=subprocess.PIPE,   # 重定向标准错误
             text=False                # 以字节模式处理输出
