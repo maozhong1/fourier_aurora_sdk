@@ -23,11 +23,12 @@ fi
 
 XSOCK="${XSOCK:-/tmp/.X11-unix}"
 
-# GR2 foot contact. "sonic" (default) mounts the Sonic/UniLab training sole
-# (scene_sonic_27dof: wider box, foot mesh contact off) over the image's gr2t2v2.xml;
-# "aurora" keeps the image's original model.
+# GR2 foot contact. "aurora" (default) keeps the image's original model (real-robot
+# sole, foot mesh contact on; matches UniLab scene_sonic_27dof_realfoot). "sonic" mounts
+# the older Sonic/UniLab training sole (scene_sonic_27dof: wider box, foot mesh contact
+# off) over the image's gr2t2v2.xml.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GR2_FEET="${GR2_FEET:-sonic}"
+GR2_FEET="${GR2_FEET:-aurora}"
 EXTRA_MOUNTS=()
 if [[ "$GR2_FEET" == "sonic" ]]; then
   FEET_XML="$SCRIPT_DIR/aurora_mjcf/resources/GR2/mjcf/gr2t2v2_sonic_feet.xml"
