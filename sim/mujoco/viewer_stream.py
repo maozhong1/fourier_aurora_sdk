@@ -6,6 +6,8 @@ only needs a browser and ~0.3-1 MB/s instead of X11/GLX forwarding.
 
 Open http://<host>:<port>/ in a browser. Keys in the page:
   arrows: rotate camera   +/-: zoom   r: reset camera
+  Backspace (or the button): reset the robot, like Reset in the MuJoCo viewer
+The robot can also be reset with `curl http://<host>:<port>/reset`.
 """
 import os
 os.environ.setdefault('MUJOCO_GL', 'egl')
@@ -28,11 +30,15 @@ _PAGE = b"""<!doctype html><html><head><title>MuJoCo stream</title>
 <style>body{margin:0;background:#222;color:#ccc;font:13px sans-serif}
 img{display:block;margin:auto;max-width:100vw;max-height:95vh}</style></head>
 <body><img src="/stream"><div style="text-align:center">
-arrows: rotate &nbsp; +/-: zoom &nbsp; r: reset &nbsp; <span id="s"></span></div>
+arrows: rotate &nbsp; +/-: zoom &nbsp; r: reset camera &nbsp; Backspace:
+<button onclick="reset()">reset robot</button> &nbsp; <span id="s"></span></div>
 <script>
+function show(t){document.getElementById('s').textContent=t;}
+function reset(){fetch('/reset').then(r=>r.text()).then(show);}
 const k={ArrowLeft:'az=-10',ArrowRight:'az=10',ArrowUp:'el=5',ArrowDown:'el=-5',
 '+':'dist=-0.3','=':'dist=-0.3','-':'dist=0.3',r:'reset=1'};
-document.onkeydown=e=>{if(k[e.key]){fetch('/cam?'+k[e.key]).then(r=>r.text())
+document.onkeydown=e=>{if(e.key==='Backspace'){reset();e.preventDefault();return;}
+if(k[e.key]){fetch('/cam?'+k[e.key]).then(r=>r.text())
 .then(t=>document.getElementById('s').textContent=t);e.preventDefault();}};
 </script></body></html>"""
 
@@ -95,7 +101,17 @@ def _render_loop(m, d, lock, cam, hub, stop, width, height, fps, quality):
       next_t = time.perf_counter()
 
 
-def _make_handler(hub: FrameHub, cam, cam_default):
+def _reset_robot(m, d, lock):
+  """Same as the Reset button of the MuJoCo viewer: back to qpos0 (or keyframe 0)."""
+  with lock:
+    if m.nkey > 0:
+      mujoco.mj_resetDataKeyframe(m, d, 0)
+    else:
+      mujoco.mj_resetData(m, d)
+    mujoco.mj_forward(m, d)
+
+
+def _make_handler(hub: FrameHub, cam, cam_default, reset_robot):
 
   class Handler(BaseHTTPRequestHandler):
 
@@ -106,6 +122,9 @@ def _make_handler(hub: FrameHub, cam, cam_default):
       url = urlparse(self.path)
       if url.path == '/':
         self._send(200, 'text/html', _PAGE)
+      elif url.path == '/reset':
+        reset_robot()
+        self._send(200, 'text/plain', b'robot reset')
       elif url.path == '/cam':
         q = {k: float(v[0]) for k, v in parse_qs(url.query).items()}
         if q.get('reset'):
@@ -183,7 +202,7 @@ def main(argv) -> None:
   for t in threads:
     t.start()
 
-  server = ThreadingHTTPServer(('0.0.0.0', _PORT.value), _make_handler(hub, cam, cam_default))
+  server = ThreadingHTTPServer(('0.0.0.0', _PORT.value), _make_handler(hub, cam, cam_default, lambda: _reset_robot(m, d, lock)))
   server.daemon_threads = True
   print(f'Streaming {_WIDTH.value}x{_HEIGHT.value} @ {_FPS.value} fps, '
         f'MUJOCO_GL={os.environ["MUJOCO_GL"]}: http://<this-host>:{_PORT.value}/', flush=True)
